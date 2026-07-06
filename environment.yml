@@ -1,0 +1,17 @@
+name: pogo-automation
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - numpy
+  - pillow
+  - pyyaml
+  - pytest
+  - pip:
+      - opencv-python
+      - pandas
+      - paddlepaddle
+      - paddleocr
+      - -e .

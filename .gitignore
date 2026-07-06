@@ -1,0 +1,31 @@
+# Runtime output
+captures/screenshots/*
+captures/crops/*
+captures/logs/*
+!captures/screenshots/.gitkeep
+!captures/crops/.gitkeep
+!captures/logs/.gitkeep
+
+# Local templates may be device/UI specific. Keep only placeholders unless intentionally publishing examples.
+captures/templates/*
+!captures/templates/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+build/
+dist/
+
+# Environments
+.venv/
+.env
+.env.*
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/

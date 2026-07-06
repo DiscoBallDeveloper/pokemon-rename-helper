@@ -1,0 +1,7 @@
+opencv-python
+pillow
+pandas
+pyyaml
+paddlepaddle
+paddleocr
+-e .

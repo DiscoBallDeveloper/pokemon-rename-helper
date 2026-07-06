@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pogo-pokegenie-automation"
+version = "1.3.0"
+description = "Local ADB/OCR Pokémon GO + Poke Genie scan and rename workflow"
+requires-python = ">=3.10"
+dependencies = [
+  "opencv-python",
+  "pillow",
+  "pandas",
+  "pyyaml",
+  "paddleocr",
+  "paddlepaddle"
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff"]
+
+[project.scripts]
+pogo = "pogo_auto.cli:main"
+
+[tool.setuptools]
+packages = ["pogo_auto"]

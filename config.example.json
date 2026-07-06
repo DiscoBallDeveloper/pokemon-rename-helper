@@ -1,0 +1,24 @@
+{
+  "adb_serial": null,
+  "scan": {
+    "count": 5,
+    "threshold": 95.0,
+    "iv_floor": 14,
+    "wait_before_ocr": 3.0,
+    "wait_after_next": 3.0
+  },
+  "rename": {
+    "wait_after_pencil": 1.5,
+    "wait_after_appraise_before_triangle_reveal": 1.5,
+    "wait_after_triangle_reveal": 2.0,
+    "reverse_log_order": true,
+    "navigation_direction": "left"
+  },
+  "apps": {
+    "pokemon_go_package": "com.nianticlabs.pokemongo",
+    "pokegenie_packages": [
+      "com.cjin.pokegenie.standard",
+      "com.cjin.pokegenie"
+    ]
+  }
+}
