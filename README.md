@@ -1,6 +1,20 @@
-# pogo-pokegenie-automation
+# Pokémon GO native appraisal automation
 
-A local terminal workflow for automating parts of the Pokémon GO + Poke Genie review process.
+A local ADB/OCR workflow for scanning Pokémon GO's native Appraise bars,
+calculating local PvP IV ranks, and applying verified nickname decisions.
+
+## Poke Genie is optional
+
+Poke Genie is **not required** for the recommended native workflow:
+
+```bash
+pogo native-workflow --count 10 --form NORMAL --debug-native --execute
+```
+
+`native-scan`, `prepare-native-renames`, `native-rename`, and
+`native-workflow` use Pokémon GO's own Appraise screen and locally generated
+rank data. The older Poke Genie overlay/CSV commands remain in the repository
+as a legacy compatibility path only; they are not used by the native workflow.
 
 ## Support / Questions
 
@@ -20,10 +34,12 @@ If you prefer a more integrated experience, similar functionality is available i
 
 ## What it does
 
-1. Scans Pokémon using the Poke Genie overlay/OCR.
-2. Writes decisions to `captures/logs/pokegenie_scan_log.csv`.
-3. Stops the Poke Genie overlay.
-4. Renames Pokémon from the CSV in reverse order.
+1. Reads Attack, Defense/Defence, and HP from Pokémon GO's native Appraise bars.
+2. Confirms multiple frames before producing a verified manifest.
+3. Calculates local Great/Ultra/Master League IV-spread ranks, including
+   cap-relevant evolutions.
+4. Renames only verified records in reverse order, using PvP, raid, or discard
+   tags such as `delete2`.
 
 This tool only renames Pokémon. It does **not** transfer them.
 
@@ -35,15 +51,13 @@ file containing Pokémon base stats and CPM values. `POGO_FORM` defaults to
 `NORMAL`; `POGO_MAX_LEVEL` defaults to `50`. The included example data is for
 format reference only and is never selected automatically for real ranks.
 
-During a scan, OCR runs over the full screenshot as well as the Poke Genie
-crop. It finds the Attack, Defense/Defence, and HP labels, validates their
-layout, predicts each bar from the label geometry, and refines the capsule by
-colour. Native values, species comparison, ranks, confidence, and errors are
-written to `captures/logs/pokegenie_scan_log.csv`; native-IV debug images are
-written to `captures/crops/` alongside OCR crops and screenshots in
-`captures/screenshots/`.
+During a native scan, OCR runs over the full Pokémon GO screenshot. It finds
+the Attack, Defense/Defence, and HP labels, validates their layout, predicts
+each bar from shared geometry, and decodes the 16 legal IV states from the bar
+cells. Native manifests are written to `captures/logs/`; debug images are
+written to `captures/crops/` and screenshots to `captures/screenshots/`.
 
-Navigation uses horizontal ADB swipes at the appraisal-arrow level. Next/right
+Native navigation uses horizontal ADB swipes at the appraisal-arrow level. Next/right
 means a right-to-left finger swipe; previous/left reverses it. Coordinates are
 scaled from the active device size, with the known 1008×2244 layout used for
 dry runs. Run a one-Pokémon non-destructive check with:
@@ -129,7 +143,7 @@ This project needs four things installed and working:
 1. **Python / Conda environment** for OCR and automation.
 2. **Google Android platform-tools ADB** for USB and Wi-Fi device control.
 3. **Runtime Python package install** so the `pogo` command is available.
-4. **Template images** under `captures/templates/`.
+4. **Native UI templates** under `captures/templates/`.
 
 ### 1. Create or update the Conda environment
 
@@ -357,8 +371,10 @@ Typical required files:
 three_bar_menu_template.png
 rename_pencil_template.png
 rename_ok_template.png
-pokegenie_overlay_template.png
 ```
+
+`pokegenie_overlay_template.png` is needed only for the legacy Poke Genie
+scanner.
 
 Copy templates from an older working folder if needed:
 
@@ -391,7 +407,7 @@ pogo workflow --count 5 --no-clean-start
 
 ### 7. Current nickname format
 
-PvP names are compact and include the league plus the Poke Genie evolution/form marker:
+Legacy CSV PvP names are compact and include the league plus the Poke Genie evolution/form marker:
 
 ```text
 G6371       Great League 63.7, marker 1
@@ -410,7 +426,7 @@ IV names are compact digits:
 
 This is refactor v1.3 sanitized.
 
-The proven working scanner and renamer are still preserved as:
+The older Poke Genie scanner and renamer are preserved for compatibility only:
 
 ```text
 pogo_auto/legacy_scan.py
@@ -425,7 +441,7 @@ pogo_auto/
   apps.py         Android app package actions
   cli.py          terminal commands
   doctor.py       setup diagnostics
-  workflow.py     scan → kill Poke Genie → rename orchestration
+  workflow.py     legacy scan/rename orchestration
   runners.py      subprocess module runner used by compatibility layer
   scan.py         scan-pass API wrapper
   rename.py       rename-pass API wrapper
@@ -531,6 +547,9 @@ right_triangle_template.png (optional visual reference; swipes navigate normally
 pokegenie_overlay_template.png
 ```
 
+The first three templates support the native workflow. The Poke Genie overlay
+template is required only when using the legacy `pogo scan` command.
+
 The Appraise menu entry is selected by OCR, so `appraise_template.png` is not
 required. If the menu OCR misses it, the workflow uses its scaled Appraise
 coordinate as a fallback.
@@ -541,6 +560,11 @@ coordinate as a fallback.
 pogo devices
 pogo doctor
 pogo clean
+# Recommended native-only path
+pogo native-scan --count 5 --advance --form NORMAL
+pogo native-workflow --count 5 --form NORMAL --execute
+
+# Legacy Poke Genie compatibility commands
 pogo scan --count 5
 pogo kill-pokegenie
 pogo rename --count 5
@@ -574,7 +598,7 @@ IV keeps use compact IV digits:
 151414
 ```
 
-Rename candidates use:
+Legacy Poke Genie rename candidates use:
 
 ```text
 delete1
@@ -589,7 +613,14 @@ python -m py_compile pogo_auto/*.py
 
 ## Safety
 
-Review the CSV before renaming:
+For the native workflow, review the frozen native rename manifest before
+running `native-rename --execute`:
+
+```bash
+cat captures/logs/native_rename_manifest.json
+```
+
+The Poke Genie CSV review step applies only to the legacy workflow:
 
 ```bash
 cat captures/logs/pokegenie_scan_log.csv
