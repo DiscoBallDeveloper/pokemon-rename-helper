@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+from __future__ import annotations
+
 import os
 os.environ["FLAGS_use_mkldnn"] = "0"
 os.environ["FLAGS_enable_mkldnn"] = "0"
@@ -15,7 +17,10 @@ import time
 from typing import Any, Dict, List, Tuple, Optional
 
 import cv2
-from paddleocr import PaddleOCR
+
+from .ocr_anchored_appraisal import OcrAnchoredAppraisalDetector
+from .pvp_rank import PokemonData, all_league_ranks
+from .ocr import find_text_center
 
 
 # =============================================================================
@@ -41,9 +46,10 @@ for d in [SCREEN_DIR, CROP_DIR, LOG_DIR, TEMPLATE_DIR]:
 
 
 try:
-    from .navigation import fixed_triangle_point
+    from .navigation import fixed_triangle_point, triangle_level_swipe
 except ImportError:  # Allows direct script execution during debugging.
     fixed_triangle_point = None
+    triangle_level_swipe = None
 
 COORDS_1008x2244 = {
     "three_bar_menu": (866, 2105),
@@ -106,6 +112,18 @@ def adb_tap(x: int, y: int, execute: bool = False) -> None:
         return
 
     adb("shell", "input", "tap", x, y)
+
+
+def adb_swipe(
+    start_x: int, start_y: int, end_x: int, end_y: int,
+    duration_ms: int = 280, execute: bool = False,
+) -> None:
+    if duration_ms <= 0:
+        raise ValueError("duration_ms must be positive")
+    if not execute:
+        print(f"[DRY RUN] adb shell input swipe {start_x} {start_y} {end_x} {end_y} {duration_ms}")
+        return
+    adb("shell", "input", "swipe", start_x, start_y, end_x, end_y, duration_ms)
 
 
 def adb_screenshot(path: pathlib.Path) -> None:
@@ -252,6 +270,15 @@ def tap_ui_template(
     disable_templates: bool = False,
 ) -> Optional[Tuple[int, int]]:
     fallback_xy = FALLBACK_COORDS.get(name)
+
+    if name == "appraise" and not disable_templates:
+        screenshot_path = save_screen("before_ocr_appraise", iteration, attempt)
+        point = find_text_center(screenshot_path, "Appraise")
+        if point is not None:
+            print(f"appraise: OCR matched menu text at {point[0]},{point[1]}")
+            adb_tap(*point, execute=execute)
+            return point
+        print("appraise: OCR did not find menu text; using configured fallback.")
 
     if disable_templates:
         print(f"{name}: template matching disabled.")
@@ -533,6 +560,13 @@ def save_debug_overlay(
 # =============================================================================
 
 def make_ocr() -> PaddleOCR:
+    try:
+        from paddleocr import PaddleOCR
+    except ImportError as exc:
+        raise RuntimeError(
+            "PaddleOCR is required to scan. Install project dependencies with "
+            "`python -m pip install -e .`."
+        ) from exc
     return PaddleOCR(
         lang="en",
         use_doc_orientation_classify=False,
@@ -543,6 +577,29 @@ def make_ocr() -> PaddleOCR:
 
 
 def run_ocr(ocr: PaddleOCR, img) -> List[Dict[str, Any]]:
+    if not hasattr(ocr, "predict"):
+        rows: List[Dict[str, Any]] = []
+
+        def visit(node: Any) -> None:
+            if (
+                isinstance(node, (list, tuple)) and len(node) == 2
+                and isinstance(node[0], (list, tuple)) and len(node[0]) >= 4
+                and isinstance(node[1], (list, tuple)) and len(node[1]) >= 2
+                and isinstance(node[1][0], str)
+            ):
+                rows.append({
+                    "text": str(node[1][0]),
+                    "score": float(node[1][1]),
+                    "box": [list(point) for point in node[0]],
+                })
+                return
+            if isinstance(node, (list, tuple)):
+                for child in node:
+                    visit(child)
+
+        visit(ocr.ocr(img, cls=True))
+        return rows
+
     result = ocr.predict(img)
     rows = []
 
@@ -1017,6 +1074,71 @@ def scan_current_table_once(
     rows = run_ocr(ocr, ocr_crop)
     parsed = parse_poke_genie_rows(rows)
     classify(parsed, threshold, iv_floor=iv_floor)
+    # Legacy/Poke Genie scans are comparison evidence only. They do not have
+    # the multi-frame native consensus required for an automatic rename.
+    parsed["scan_status"] = "REVIEW"
+    parsed["failure_reasons"] = ["INCOMPLETE_SCAN"]
+
+    # The Poke Genie crop does not contain Pokémon GO's native appraisal labels
+    # or caught sentence, so run the same OCR adapter over the full screenshot.
+    full_screen_rows = run_ocr(ocr, img)
+    native_debug_path = CROP_DIR / (
+        f"scan{iteration}_attempt{attempt}_native_iv_debug_{ts}.png"
+    )
+    native = OcrAnchoredAppraisalDetector().detect(
+        img, full_screen_rows, debug_path=str(native_debug_path)
+    )
+
+    pokegenie_species = parsed.get("species")
+    native_species = native.species_from_sentence
+    ranking_species = native_species or pokegenie_species
+    parsed.update({
+        "pokegenie_species": pokegenie_species,
+        "native_species": native_species,
+        "species_match": bool(
+            pokegenie_species and native_species
+            and pokegenie_species.casefold() == native_species.casefold()
+        ),
+        "native_attack": native.attack,
+        "native_defense": native.defense,
+        "native_hp": native.hp,
+        "native_bar_confidence": native.confidence,
+        "native_bar_reason": native.reason,
+        "native_bar_debug": str(native_debug_path),
+        "native_vs_genie_match": (
+            all(value is not None for value in (
+                native.attack, native.defense, native.hp,
+                parsed.get("attack"), parsed.get("defense"), parsed.get("hp"),
+            ))
+            and (int(parsed["attack"]), int(parsed["defense"]), int(parsed["hp"]))
+            == (native.attack, native.defense, native.hp)
+        ),
+        "calculated_gl_rank": None,
+        "calculated_ul_rank": None,
+        "calculated_ml_rank": None,
+        "rank_error": None,
+    })
+
+    # Rankings intentionally require an explicit complete data file. The bundled
+    # example JSON is not selected automatically and must not produce real ranks.
+    pokemon_data_path = os.environ.get("POGO_POKEMON_DATA")
+    if (
+        pokemon_data_path and ranking_species
+        and native.reason == "ok"
+        and native.attack is not None and native.defense is not None and native.hp is not None
+    ):
+        try:
+            ranks = all_league_ranks(
+                PokemonData(pokemon_data_path), ranking_species,
+                native.attack, native.defense, native.hp,
+                form=os.environ.get("POGO_FORM", "NORMAL"),
+                max_level=float(os.environ.get("POGO_MAX_LEVEL", "50")),
+            )
+            parsed["calculated_gl_rank"] = ranks["GL"].rank
+            parsed["calculated_ul_rank"] = ranks["UL"].rank
+            parsed["calculated_ml_rank"] = ranks["ML"].rank
+        except (OSError, KeyError, ValueError) as exc:
+            parsed["rank_error"] = str(exc)
 
     result = {
         "iteration": iteration,
@@ -1042,12 +1164,10 @@ def refresh_same_pokemon_left_right(
     no_template_fallback: bool,
     iteration: int,
 ) -> None:
-    print("Refreshing same Pokémon: left triangle -> wait -> right triangle -> wait")
-
-    print("Scanner fixed refresh navigation enabled; tapping lower-left then lower-right fixed triangle coordinates.")
-    tap_fixed_scan_triangle("left", execute=execute)
+    print("Refreshing same Pokémon: previous swipe -> wait -> next swipe -> wait")
+    swipe_fixed_scan_triangle_level("left", execute=execute)
     time.sleep(wait_after_left)
-    tap_fixed_scan_triangle("right", execute=execute)
+    swipe_fixed_scan_triangle_level("right", execute=execute)
     time.sleep(wait_after_right)
     return
     adb_tap(*COORDS_1008x2244["left_triangle"], execute=execute)
@@ -1126,8 +1246,14 @@ def scan_current_table_with_retries(
                 print("Retry refresh disabled. Waiting before next OCR attempt...")
                 time.sleep(wait_after_right)
 
-    print("Still unreadable after retries. Keeping final REVIEW/RETRY result.")
+    print("Still unreadable after retries. Keeping final REVIEW result.")
     assert last_result is not None
+    last_result["scan_status"] = "REVIEW"
+    last_result["decision"] = "REVIEW"
+    last_result["rename_to"] = ""
+    last_result["keep_reason_type"] = "review"
+    last_result["failure_reasons"] = ["MALFORMED_POKEGENIE_RESULT"]
+    last_result["reason"] = "REVIEW: malformed or incomplete Poke Genie OCR result"
     return last_result
 
 
@@ -1140,12 +1266,27 @@ def log_scan(result: Dict[str, Any]) -> None:
         "attempt": result.get("attempt"),
         "timestamp": result["timestamp"],
         "decision": result.get("decision"),
+        "scan_status": result.get("scan_status", "REVIEW"),
+        "failure_reasons": json.dumps(result.get("failure_reasons", [])),
         "reason": result.get("reason"),
         "species": result.get("species"),
+        "pokegenie_species": result.get("pokegenie_species"),
+        "native_species": result.get("native_species"),
+        "species_match": result.get("species_match"),
         "iv_percent": result.get("iv_percent"),
         "attack": result.get("attack"),
         "defense": result.get("defense"),
         "hp": result.get("hp"),
+        "native_attack": result.get("native_attack"),
+        "native_defense": result.get("native_defense"),
+        "native_hp": result.get("native_hp"),
+        "native_bar_confidence": result.get("native_bar_confidence"),
+        "native_bar_reason": result.get("native_bar_reason"),
+        "native_vs_genie_match": result.get("native_vs_genie_match"),
+        "calculated_gl_rank": result.get("calculated_gl_rank"),
+        "calculated_ul_rank": result.get("calculated_ul_rank"),
+        "calculated_ml_rank": result.get("calculated_ml_rank"),
+        "rank_error": result.get("rank_error"),
         "cp": result.get("cp"),
         "level": result.get("level"),
         "pvp_percentages": json.dumps(result.get("pvp_percentages", [])),
@@ -1264,6 +1405,25 @@ def tap_fixed_scan_triangle(direction: str, execute: bool) -> Tuple[int, int]:
     return x, y
 
 
+def swipe_fixed_scan_triangle_level(
+    direction: str, execute: bool, duration_ms: int = 280,
+) -> Tuple[int, int, int, int]:
+    """Swipe at the scaled appraisal-arrow level; use known geometry in dry runs."""
+    width, height = get_screen_size() if execute else (1008, 2244)
+    if triangle_level_swipe is not None:
+        gesture = triangle_level_swipe(direction, width, height, duration_ms)
+        start_x, start_y = gesture.start.x, gesture.start.y
+        end_x, end_y = gesture.end.x, gesture.end.y
+    else:
+        y = round(height * (1757 / 2244))
+        left_x, right_x = max(8, round(width * (39 / 1008))), min(width - 9, round(width * (970 / 1008)))
+        start_x, end_x = (right_x, left_x) if direction == "right" else (left_x, right_x)
+        start_y = end_y = y
+    print(f"Scanner {direction} swipe at triangle level: ({start_x},{start_y}) -> ({end_x},{end_y}), {duration_ms}ms, screen {width}x{height}")
+    adb_swipe(start_x, start_y, end_x, end_y, duration_ms, execute)
+    return start_x, start_y, end_x, end_y
+
+
 def press_next_triangle(
     execute: bool,
     wait_after_next: float,
@@ -1271,8 +1431,8 @@ def press_next_triangle(
     no_template_fallback: bool,
     iteration: int,
 ) -> None:
-    print("Scanner fixed-triangle navigation enabled; using lower-right triangle coordinate.")
-    tap_fixed_scan_triangle("right", execute=execute)
+    print("Scanner swipe navigation enabled; swiping right-to-left at triangle level.")
+    swipe_fixed_scan_triangle_level("right", execute=execute)
     time.sleep(wait_after_next)
     return
 
@@ -1323,11 +1483,11 @@ def return_to_first_scanned_pokemon(
         print("Return-to-start: no left taps needed.")
         return
 
-    print(f"Return-to-start: pressing left triangle {left_taps} time(s)...")
+    print(f"Return-to-start: swiping to previous Pokémon {left_taps} time(s)...")
 
     for idx in range(1, left_taps + 1):
-        print(f"Return-to-start left tap {idx}/{left_taps}")
-        adb_tap(*COORDS_1008x2244["left_triangle"], execute=execute)
+        print(f"Return-to-start previous swipe {idx}/{left_taps}")
+        swipe_fixed_scan_triangle_level("left", execute=execute)
         time.sleep(wait_after_left)
 
     if prepare_for_rename:
@@ -1439,7 +1599,7 @@ def main() -> None:
     parser.add_argument("--wait-before-ocr", type=float, default=3.0)
     parser.add_argument("--retries", type=int, default=1)
 
-    parser.add_argument("--refresh-on-retry", action="store_true", default=True)
+    parser.add_argument("--refresh-on-retry", action="store_true", default=False)
     parser.add_argument("--no-refresh-on-retry", action="store_false", dest="refresh_on_retry")
     parser.add_argument("--wait-after-left", type=float, default=2.5)
     parser.add_argument("--wait-after-right-retry", type=float, default=3.0)

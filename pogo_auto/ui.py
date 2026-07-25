@@ -17,6 +17,7 @@ class ScreenModel:
     three_bar_menu: Point = Point(866, 2105)
     appraise: Point = Point(680, 1743)
     rename_pencil: Point = Point(669, 924)
+    rename_text_field: Point = Point(504, 1015)
     rename_ok: Point = Point(504, 1207)
 
     left_triangle_reference: Point = Point(39, 1757)

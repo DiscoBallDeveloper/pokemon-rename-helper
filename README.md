@@ -27,6 +27,101 @@ If you prefer a more integrated experience, similar functionality is available i
 
 This tool only renames Pokémon. It does **not** transfer them.
 
+## Native IV OCR and swipe navigation
+
+Install the package from the project root with `python -m pip install -e .`.
+For independently calculated ranks, set `POGO_POKEMON_DATA` to a complete JSON
+file containing Pokémon base stats and CPM values. `POGO_FORM` defaults to
+`NORMAL`; `POGO_MAX_LEVEL` defaults to `50`. The included example data is for
+format reference only and is never selected automatically for real ranks.
+
+During a scan, OCR runs over the full screenshot as well as the Poke Genie
+crop. It finds the Attack, Defense/Defence, and HP labels, validates their
+layout, predicts each bar from the label geometry, and refines the capsule by
+colour. Native values, species comparison, ranks, confidence, and errors are
+written to `captures/logs/pokegenie_scan_log.csv`; native-IV debug images are
+written to `captures/crops/` alongside OCR crops and screenshots in
+`captures/screenshots/`.
+
+Navigation uses horizontal ADB swipes at the appraisal-arrow level. Next/right
+means a right-to-left finger swipe; previous/left reverses it. Coordinates are
+scaled from the active device size, with the known 1008×2244 layout used for
+dry runs. Run a one-Pokémon non-destructive check with:
+
+```bash
+pogo workflow --count 1 --dry-run
+```
+
+Run the test suite with `python -m pytest`.
+
+### Safe native evidence scan
+
+`native-scan` reads only the currently open Pokémon GO appraisal panel. It
+writes multiple frames after opening Appraise by menu OCR and a neutral
+panel-settle tap, requires exact native-IV and species agreement, and
+writes a JSON manifest. It never renames Pokémon. Form is explicit because a
+silent `NORMAL` fallback is unsafe for forms with different base stats.
+
+```bash
+pogo native-scan --count 1 --frames-per-pokemon 3 --frame-delay-ms 350 \
+  --form NORMAL --debug-native --manifest-output captures/logs/native_manifest.json
+pogo manifest-status captures/logs/native_manifest.json
+```
+
+Use `--advance` only when scanning more than one Pokémon; every intentional
+swipe is fingerprint-checked before the next scan. Legacy workflow rename is
+now disabled by default. `--rename-after-scan` remains an explicit legacy
+escape hatch and should not be used in place of verified native manifests.
+Use `--already-appraising` only when the appraisal panel was opened manually.
+
+### Local ranks and verified-native renaming
+
+Build the local rank dataset once from a downloaded PokeMiners Game Master
+JSON, then inspect a spread (including cap-relevant evolutions):
+
+```bash
+pogo build-rank-data latest.json --output captures/data/pokemon_stats_and_cpm.json
+pogo rank Wooloo 8 4 1 --evolutions --suggest-name
+```
+
+`prepare-native-renames` consumes only `VERIFIED` native records. It computes
+local GL/UL ranks for the Pokémon and its cap-relevant evolutions, keeps a
+spread when either percentile is at least 95, keeps `14/14/14` or better for
+raids, and otherwise assigns the `delete2` tag. The compact PvP name stores
+league, raw rank up to 999 (or percentile above that), and evolution stage.
+Use `--discard-tag remove2` if that is your preferred tag.
+
+```bash
+pogo prepare-native-renames captures/logs/native_manifest.json \
+  --data captures/data/pokemon_stats_and_cpm.json \
+  --output captures/logs/native_rename_manifest.json
+pogo native-rename captures/logs/native_rename_manifest.json
+```
+
+The second command is a dry-run plan. To rename on the phone, start on the
+**last Pokémon in that native scan with Appraise still open**, review the plan,
+then add `--execute`. The executor refuses any manifest containing REVIEW or
+incomplete entries, verifies the final native species and IVs before closing
+Appraise with one middle tap, and aborts if a later detail-screen swipe does
+not move to a different Pokémon:
+
+```bash
+pogo native-rename captures/logs/native_rename_manifest.json --execute
+```
+
+For a single end-to-end native-only run, use `native-workflow`. It scans
+forward with right-to-left swipes and then renames backward with left-to-right
+swipes, beginning at the last scanned Pokémon. It stops before any rename if
+even one scan is REVIEW or cannot be ranked.
+
+```bash
+# Inspect the non-mutating plan first.
+pogo native-workflow --count 10 --form NORMAL --debug-native
+
+# Perform scan, rank, and verified-only reverse rename.
+pogo native-workflow --count 10 --form NORMAL --debug-native --execute
+```
+
 ## Full installation requirements
 
 This project needs four things installed and working:
@@ -260,7 +355,6 @@ Typical required files:
 
 ```text
 three_bar_menu_template.png
-appraise_template.png
 rename_pencil_template.png
 rename_ok_template.png
 pokegenie_overlay_template.png
@@ -433,10 +527,13 @@ Required:
 rename_pencil_template.png
 rename_ok_template.png
 three_bar_menu_template.png
-appraise_template.png
-right_triangle_template.png
+right_triangle_template.png (optional visual reference; swipes navigate normally)
 pokegenie_overlay_template.png
 ```
+
+The Appraise menu entry is selected by OCR, so `appraise_template.png` is not
+required. If the menu OCR misses it, the workflow uses its scaled Appraise
+coordinate as a fallback.
 
 ## Main commands
 

@@ -12,7 +12,6 @@ REQUIRED_TEMPLATES = [
     "rename_pencil_template.png",
     "rename_ok_template.png",
     "three_bar_menu_template.png",
-    "appraise_template.png",
     "right_triangle_template.png",
     "pokegenie_overlay_template.png",
 ]

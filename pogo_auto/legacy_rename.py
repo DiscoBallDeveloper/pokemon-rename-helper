@@ -12,6 +12,8 @@ import re
 
 import cv2
 
+from .ocr import find_text_center
+
 
 # =============================================================================
 # CONFIG
@@ -35,9 +37,10 @@ for d in [SCREEN_DIR, LOG_DIR, TEMPLATE_DIR]:
 
 
 try:
-    from .navigation import fixed_triangle_point
+    from .navigation import fixed_triangle_point, triangle_level_swipe
 except ImportError:  # Allows direct script execution during debugging.
     fixed_triangle_point = None
+    triangle_level_swipe = None
 
 COORDS_1008x2244 = {
     # Appraisal / navigation fallback coordinates
@@ -126,6 +129,18 @@ def adb_tap(x: int, y: int, execute: bool = False) -> None:
         print(f"[DRY RUN] tap {x},{y}")
         return
     adb("shell", "input", "tap", x, y)
+
+
+def adb_swipe(
+    start_x: int, start_y: int, end_x: int, end_y: int,
+    duration_ms: int = 280, execute: bool = False,
+) -> None:
+    if duration_ms <= 0:
+        raise ValueError("duration_ms must be positive")
+    if not execute:
+        print(f"[DRY RUN] adb shell input swipe {start_x} {start_y} {end_x} {end_y} {duration_ms}")
+        return
+    adb("shell", "input", "swipe", start_x, start_y, end_x, end_y, duration_ms)
 
 
 def adb_keyevent(key: str, execute: bool = False) -> None:
@@ -323,6 +338,16 @@ def tap_ui_template(
     Finds a UI template and taps its center. Falls back to old coordinates if needed.
     """
     fallback_xy = FALLBACK_COORDS.get(name)
+
+    if name == "appraise" and not disable_templates:
+        screenshot_path = save_screenshot("before_ocr_appraise", row_number)
+        if screenshot_path is not None:
+            point = find_text_center(screenshot_path, "Appraise")
+            if point is not None:
+                print(f"appraise: OCR matched menu text at {point[0]},{point[1]}")
+                adb_tap(*point, execute=execute)
+                return point
+        print("appraise: OCR did not find menu text; using configured fallback.")
 
     if disable_templates:
         print(f"{name}: template matching disabled.")
@@ -1073,6 +1098,25 @@ def tap_fixed_navigation_triangle(
     return x, y
 
 
+def swipe_fixed_navigation_triangle_level(
+    direction: str, execute: bool, duration_ms: int = 280,
+) -> Tuple[int, int, int, int]:
+    """Swipe at the scaled appraisal-arrow level; use known geometry in dry runs."""
+    width, height = get_screen_size() if execute else (1008, 2244)
+    if triangle_level_swipe is not None:
+        gesture = triangle_level_swipe(direction, width, height, duration_ms)
+        start_x, start_y = gesture.start.x, gesture.start.y
+        end_x, end_y = gesture.end.x, gesture.end.y
+    else:
+        y = round(height * (1757 / 2244))
+        left_x, right_x = max(8, round(width * (39 / 1008))), min(width - 9, round(width * (970 / 1008)))
+        start_x, end_x = (right_x, left_x) if direction == "right" else (left_x, right_x)
+        start_y = end_y = y
+    print(f"Swipe {direction} at triangle level: ({start_x},{start_y}) -> ({end_x},{end_y}), {duration_ms}ms, screen {width}x{height}")
+    adb_swipe(start_x, start_y, end_x, end_y, duration_ms, execute)
+    return start_x, start_y, end_x, end_y
+
+
 def reveal_triangles_with_three_bar_and_tap_fixed(
     direction: str,
     execute: bool,
@@ -1094,7 +1138,7 @@ def reveal_triangles_with_three_bar_and_tap_fixed(
         print(f"Waiting {wait_after_reveal:.1f}s after 3-bar reveal tap...")
         time.sleep(wait_after_reveal)
 
-    return tap_fixed_navigation_triangle(direction=direction, execute=execute)
+    return swipe_fixed_navigation_triangle_level(direction=direction, execute=execute)
 
 
 def open_appraisal_and_go_next(
@@ -1142,13 +1186,13 @@ def open_appraisal_and_go_next(
     time.sleep(wait_after_appraise)
 
     print(
-        f"Skipping middle-screen pre-tap before {navigation_direction} triangle; "
-        "3-bar reveal + fixed triangle tap will handle navigation."
+        f"Skipping middle-screen pre-tap before {navigation_direction} navigation; "
+        "3-bar reveal + triangle-level swipe will handle navigation."
     )
 
     triangle_taps = max(1, triangle_taps_per_navigation)
 
-    print(f"Going to {navigation_direction} Pokémon with {triangle_taps} triangle tap(s)...")
+    print(f"Going to {navigation_direction} Pokémon with {triangle_taps} swipe(s)...")
 
     if fixed_triangle_navigation:
         for tap_num in range(1, triangle_taps + 1):
@@ -1163,7 +1207,7 @@ def open_appraisal_and_go_next(
             else:
                 time.sleep(wait_after_next)
 
-        print("Pressing center of screen after fixed triangle taps...")
+        print("Pressing center of screen after triangle-level swipes...")
         adb_tap(*COORDS_1008x2244["after_triangle_center"], execute=execute)
         time.sleep(wait_after_right_side_middle)
         return

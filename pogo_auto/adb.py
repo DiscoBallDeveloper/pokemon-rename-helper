@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from typing import Optional
 
 
+CONNECT_PORT = 5555
+
+
 @dataclass(frozen=True)
 class AdbTarget:
     """USB or Wi-Fi ADB target."""
@@ -40,10 +43,34 @@ class AdbTarget:
     def input_tap(self, x: int, y: int) -> None:
         self.shell("input", "tap", str(x), str(y))
 
+    def input_swipe(
+        self,
+        start_x: int,
+        start_y: int,
+        end_x: int,
+        end_y: int,
+        duration_ms: int = 280,
+    ) -> None:
+        """Perform an Android input swipe with a positive duration."""
+        if duration_ms <= 0:
+            raise ValueError("duration_ms must be positive")
+        self.shell(
+            "input",
+            "swipe",
+            str(start_x),
+            str(start_y),
+            str(end_x),
+            str(end_y),
+            str(duration_ms),
+        )
+
     def input_text(self, text: str) -> None:
         import shlex
         safe = text.replace(" ", "%s")
         self.shell("input", "text", shlex.quote(safe))
+
+    def input_keyevent(self, key: str) -> None:
+        self.shell("input", "keyevent", key)
 
     def screencap_png(self) -> bytes:
         result = self.run("exec-out", "screencap", "-p", capture_output=True, text=False)
