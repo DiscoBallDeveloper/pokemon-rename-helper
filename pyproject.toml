@@ -13,7 +13,10 @@ dependencies = [
   "pandas",
   "pyyaml",
   "paddleocr",
-  "paddlepaddle"
+  "paddlepaddle",
+  # Paddle imports setuptools at runtime for its extension helpers. Fresh uv
+  # environments do not include it unless it is an application dependency.
+  "setuptools>=68"
 ]
 
 [project.optional-dependencies]

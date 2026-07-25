@@ -140,40 +140,44 @@ pogo native-workflow --count 10 --form NORMAL --debug-native --execute
 
 This project needs four things installed and working:
 
-1. **Python / Conda environment** for OCR and automation.
+1. **Python 3.11 virtual environment managed by uv** for OCR and automation.
 2. **Google Android platform-tools ADB** for USB and Wi-Fi device control.
 3. **Runtime Python package install** so the `pogo` command is available.
 4. **Native UI templates** under `captures/templates/`.
 
-### 1. Create or update the Conda environment
+### 1. Create the uv environment (recommended)
 
-From the project root:
+Conda is not recommended for this project: mixing Conda packages with Paddle,
+NumPy, and Pandas can produce binary-version conflicts. Install
+[uv](https://docs.astral.sh/uv/getting-started/installation/) once, then from
+the project root run:
 
 ```bash
-conda env create -f environment.yml
-conda activate pogo-automation
+uv venv --python 3.11 .venv
+source .venv/bin/activate
+uv pip install -e ".[dev]"
 ```
 
-If the environment already exists:
+On Windows PowerShell, activate with:
 
-```bash
-conda activate pogo-automation
-conda env update -f environment.yml --prune
+```powershell
+.\.venv\Scripts\Activate.ps1
 ```
 
-Then install the project command:
+Verify that the isolated environment can load OCR dependencies:
 
 ```bash
-python -m pip install -e .
+python -c "import numpy, pandas, paddleocr, setuptools; print(numpy.__version__, pandas.__version__)"
 ```
 
 Optional developer checks:
 
 ```bash
-python -m pip install pytest
 find pogo_auto -name "*.py" -print0 | xargs -0 python -m py_compile
 python -m pytest
 ```
+
+`environment.yml` remains only as an unsupported legacy Conda fallback.
 
 ### 2. Install current Google platform-tools ADB on Linux
 
@@ -462,8 +466,9 @@ sudo apt update
 sudo apt install android-tools-adb -y
 
 cd pogo-pokegenie-automation-refactor-v1.3-sanitized
-./setup_linux.sh
-conda activate pogo-automation
+uv venv --python 3.11 .venv
+source .venv/bin/activate
+uv pip install -e ".[dev]"
 pogo devices
 ```
 
@@ -473,8 +478,9 @@ Install Android Platform Tools / ADB first. Then:
 
 ```powershell
 cd pogo-pokegenie-automation-refactor-v1.3-sanitized
-.\setup_windows.ps1
-conda activate pogo-automation
+uv venv --python 3.11 .venv
+.\.venv\Scripts\Activate.ps1
+uv pip install -e ".[dev]"
 pogo devices
 ```
 
