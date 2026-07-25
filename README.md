@@ -30,7 +30,7 @@ If you prefer a more integrated experience, similar functionality is available i
 
 ## Demo Screenshot
 
-<img src="assets/before_template_three_bar_menu_scan0_attempt0_20260619_133457.webp" alt="Example screenshot" width="400">
+<img src="assets/native_appraisal_debug_pikachu.png" alt="Native Pokémon GO appraisal IV-bar detection debug screenshot" width="400">
 
 ## What it does
 
